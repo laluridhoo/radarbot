@@ -1,0 +1,24 @@
+{
+  "name": "radar-bot-spionase-campaign",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=18.18" },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "once": "tsx src/index.ts --once",
+    "test:telegram": "tsx src/index.ts --test-telegram",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
