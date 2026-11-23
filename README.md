@@ -8,7 +8,7 @@ Arsitektur ini **tanpa SQL, tanpa `node-cron`, tanpa background process**. Semua
 ## Alur
 
 ```
-Telegram /set1 /set2 /set3 /list  →  POST /api/telegram  →  Upstash Redis (hashtags:slot:N)
+Telegram /set1 … /setN /list  →  POST /api/telegram  →  Upstash Redis (hashtags:slot:N)
                                               ↑
 Vercel Cron / scheduler  →  GET /api/cron?secret=...&slot=N
                                   →  Apify Actor run (async, webhooks base64)
@@ -21,6 +21,9 @@ Vercel Cron / scheduler  →  GET /api/cron?secret=...&slot=N
 | 1 | `hashtags:slot:1` | 4 | `APIFY_TOKEN_1` |
 | 2 | `hashtags:slot:2` | 3 | `APIFY_TOKEN_2` |
 | 3 | `hashtags:slot:3` | 3 | `APIFY_TOKEN_3` |
+| N | `hashtags:slot:N` | 3 | `APIFY_TOKEN_N` |
+
+Jumlah slot **dinamis**, ditentukan dari env `APIFY_TOKEN_<N>` yang kamu isi. Tambah `APIFY_TOKEN_4`, `APIFY_TOKEN_5`, … lalu deploy ulang — slot langsung aktif tanpa ubah kode.
 
 ## Struktur
 
@@ -54,21 +57,25 @@ src/
 ## Perintah Telegram
 
 - `/set1 tag1 tag2 tag3 tag4` — isi slot 1 (maks 4)
-- `/set2 tag1 tag2 tag3` — isi slot 2 (maks 3)
-- `/set3 tag1 tag2 tag3` — isi slot 3 (maks 3)
-- `/list` — lihat isi semua slot
+- `/setN tag1 tag2 tag3` — isi slot N (maks 3, contoh `/set4` kalau `APIFY_TOKEN_4` sudah diisi)
+- `/list` — lihat isi semua slot yang aktif
+
+Kirim perintah yang tidak dikenal untuk melihat daftar slot yang tersedia.
 
 Tagar otomatis dibersihkan: `#` dihapus, huruf kecil, duplikat dihapus. Hanya chat dengan ID sesuai `TELEGRAM_CHAT_ID` yang dilayani.
 
 ## Penjadwalan di Hobby
 
-⚠️ **Vercel Cron Hobby hanya bisa 1x sehari** (ekspresi lebih sering gagal saat deploy). Kalau butuh tiap 2 jam, pakai scheduler eksternal (cron-job.org, GitHub Actions, atau VPS) yang memanggil:
+⚠️ **Vercel Cron Jobs (legacy) di Hobby hanya 1x sehari.** **Vercel Schedules (beta)** bisa lebih sering (minimum 15 menit, jitter ±15 menit, 5.000 run/bulan). Alternatif paling aman untuk repo publik: scheduler eksternal (GitHub Actions / cron-job.org) yang memanggil **satu URL per slot**:
 
 ```
 GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=1
 GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=2
 GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=3
+GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=4   # dst.
 ```
+
+Jangan taruh `CRON_SECRET` di `vercel.json` karena repo ini publik — simpan di GitHub Actions secret atau environment variable scheduler.
 
 ## Hemat kredit Apify
 

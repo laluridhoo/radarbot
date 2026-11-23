@@ -2,7 +2,7 @@ import { getDatasetItems } from '../src/apify.js';
 import { requiredEnv } from '../src/env.js';
 import { findEarlyViral, type ApifyVideo } from '../src/filter.js';
 import { json } from '../src/http.js';
-import { isSlot, markSeen, type Slot } from '../src/redis.js';
+import { activeSlots, isSlot, markSeen, type Slot } from '../src/redis.js';
 import { formatViralAlert, sendTelegram } from '../src/telegram.js';
 
 interface WebhookBody {
@@ -20,7 +20,12 @@ export default {
       }
 
       const rawSlot = params.get('slot');
-      if (!isSlot(rawSlot)) return json({ ok: false, error: 'slot harus 1, 2, atau 3' }, 400);
+      if (!isSlot(rawSlot)) {
+        return json(
+          { ok: false, error: `slot tidak aktif. Slot tersedia: ${activeSlots().join(', ') || '(belum ada)'}` },
+          400,
+        );
+      }
       const slot: Slot = rawSlot;
 
       let body: WebhookBody;

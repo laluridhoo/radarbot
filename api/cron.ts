@@ -1,7 +1,7 @@
 import { startActorRun } from '../src/apify.js';
 import { requiredEnv } from '../src/env.js';
 import { json } from '../src/http.js';
-import { getHashtags, isSlot, type Slot } from '../src/redis.js';
+import { activeSlots, getHashtags, isSlot, type Slot } from '../src/redis.js';
 
 export default {
   async fetch(request: Request): Promise<Response> {
@@ -14,7 +14,12 @@ export default {
       }
 
       const rawSlot = params.get('slot');
-      if (!isSlot(rawSlot)) return json({ ok: false, error: 'slot harus 1, 2, atau 3' }, 400);
+      if (!isSlot(rawSlot)) {
+        return json(
+          { ok: false, error: `slot tidak aktif. Slot tersedia: ${activeSlots().join(', ') || '(belum ada)'}` },
+          400,
+        );
+      }
       const slot: Slot = rawSlot;
 
       const hashtags = await getHashtags(slot);
