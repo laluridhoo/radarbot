@@ -1,146 +1,81 @@
-# 📡 Radar Bot Spionase Campaign
+# 📡 Radar Bot — Early Viral (Vercel Serverless, Hobby)
 
-Bot Node.js/TypeScript yang memantau tagar campaign di TikTok (opsional Instagram Reels) lewat Apify,
-menyaring video "gacor" (umur ≤ 6 jam & views ≥ ambang batas), lalu mengirim alert ke Telegram.
+Bot Telegram untuk memantau tagar TikTok lewat Apify, lalu mengirim alert jika video lolos filter **early viral**:
+umur **< 6 jam** dan **VPH ≥ 3000** (`views / max(umur_jam, 0.5)`).
 
-## Struktur Folder
+Arsitektur ini **tanpa SQL, tanpa `node-cron`, tanpa background process**. Semua logika ada di 3 Vercel Serverless Functions dan state disimpan di Upstash Redis.
+
+## Alur
+
 ```
-radar-bot/
-├── config/hashtags.json      # daftar tagar agensi (tanpa #)
-├── data/sent.json            # (otomatis) ID video yang sudah dialert
-├── src/
-│   ├── index.ts              # entry point + cron scheduler
-│   ├── monitor.ts            # orkestrasi 1 siklus (scrape -> filter -> alert)
-│   ├── filter.ts             # logika Age & Velocity filter
-│   ├── telegram.ts           # format & kirim pesan
-│   ├── store.ts              # anti-duplikat alert
-│   ├── config.ts             # baca .env + validasi
-│   ├── http.ts / retry.ts    # fetch + exponential backoff
-│   └── scrapers/             # apify.ts, tiktok.ts, instagram.ts
-├── .env.example
-├── Dockerfile              # build lokal / Docker biasa
-├── Dockerfile.worker       # build untuk Vercel Daemon
-├── vercel.json             # deklarasi daemon
-└── package.json
+Telegram /set1 /set2 /set3 /list  →  POST /api/telegram  →  Upstash Redis (hashtags:slot:N)
+                                              ↑
+Vercel Cron / scheduler  →  GET /api/cron?secret=...&slot=N
+                                  →  Apify Actor run (async, webhooks base64)
+                                  →  ACTOR.RUN.SUCCEEDED  →  POST /api/webhook?secret=...&slot=N
+                                                                →  baca dataset → filter → Telegram
 ```
 
-## 1. Siapkan API Key
+| Slot | Key Redis | Maks tagar | Token Apify |
+|---|---|---|---|
+| 1 | `hashtags:slot:1` | 4 | `APIFY_TOKEN_1` |
+| 2 | `hashtags:slot:2` | 3 | `APIFY_TOKEN_2` |
+| 3 | `hashtags:slot:3` | 3 | `APIFY_TOKEN_3` |
 
-**Telegram Bot Token**
-1. Buka Telegram, chat **@BotFather** → `/newbot` → ikuti instruksi.
-2. Salin token (format `123456:ABC...`) ke `TELEGRAM_BOT_TOKEN`.
+## Struktur
 
-**Telegram Chat ID**
-1. Kirim pesan apa saja ke bot kamu (klik Start).
-2. Buka `https://api.telegram.org/bot<TOKEN>/getUpdates` di browser.
-3. Cari `"chat":{"id":123456789,...}` → itu `TELEGRAM_CHAT_ID`.
-   (Untuk grup: tambahkan bot ke grup, kirim pesan, ambil id yang diawali `-100...`.)
-
-**Apify Token**
-1. Daftar di https://apify.com (ada kredit gratis bulanan).
-2. Settings → API & Integrations → salin **Personal API token** ke `APIFY_TOKEN`.
-3. Cari **TikTok Hashtag Scraper** di [Apify Store](https://apify.com/store) (misalnya buatan `novas` atau `epctex`).
-   * **Actor ID**: Lihat URL browser. Jika URL-nya `https://apify.com/novas/tiktok-hashtag-scraper`, maka Actor ID-nya adalah `novas~tiktok-hashtag-scraper`. Pastikan ID ini cocok dengan yang ada di file `.env`.
-   * **Input**: Parameter (seperti hashtag/jumlah video) bisa dilihat dengan mengklik tombol **"Try for free"** atau scroll ke bagian "Input Schema".
-   * **Pricing**: Harga penggunaan scraper (misal: "Free" atau "$2 per 1000 results") biasanya tertera di dekat judul actor. Pastikan sesuai dengan kredit gratis/kebutuhanmu.
-
-## 2. Install & Konfigurasi
-```bash
-# butuh Node.js >= 18.18
-npm install
-cp .env.example .env        # lalu edit isinya
 ```
-Isi daftar tagar di `config/hashtags.json` (atau env `HASHTAGS=tag1,tag2`).
-
-## 3. Tes
-```bash
-npm run test:telegram   # cek token & chat id
-npm run once            # jalankan 1 siklus lalu keluar
-npm run dev             # mode bot (cron aktif)
+api/
+├── telegram.ts   # webhook chat Telegram (POST)
+├── cron.ts       # pemicu actor run Apify (GET)
+└── webhook.ts    # filter dataset + kirim alert (POST)
+src/
+├── apify.ts      # start run + ambil dataset
+├── env.ts        # akses environment variable
+├── filter.ts     # filter early viral
+├── http.ts       # fetch JSON helper
+├── redis.ts      # client Upstash + helper slot + dedupe
+└── telegram.ts   # kirim pesan + format alert
 ```
 
-## 4. Mengubah Ambang Batas (.env)
-| Variabel | Fungsi | Default |
-|---|---|---|
-| `MAX_AGE_HOURS` | umur maksimal video | 6 |
-| `MIN_VIEWS` | views minimal | 50000 |
-| `MIN_VIEWS_PER_HOUR` | velocity minimal (0 = off) | 0 |
-| `CRON_SCHEDULE` | jadwal | `*/30 * * * *` |
-| `RESULTS_PER_HASHTAG` | video diambil per tagar | 30 |
+## Setup
 
-Rumus velocity: `views / max(umur_jam, 0.25)`.
+1. Buat database **Upstash Redis**, salin REST URL & REST token.
+2. Import repo ke Vercel, isi Environment Variables sesuai `.env.example`.
+3. Deploy. Set webhook Telegram ke `https://<project>.vercel.app/api/telegram`:
+   ```bash
+   curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<project>.vercel.app/api/telegram"
+   ```
+4. Uji manual:
+   ```bash
+   curl "https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=1"
+   ```
 
-## 5. Deployment
+## Perintah Telegram
 
-### A. Local Machine (paling gampang)
-```bash
-npm run build
-npm i -g pm2
-pm2 start dist/index.js --name radar-bot
-pm2 save && pm2 startup     # auto-start setelah reboot
-pm2 logs radar-bot
+- `/set1 tag1 tag2 tag3 tag4` — isi slot 1 (maks 4)
+- `/set2 tag1 tag2 tag3` — isi slot 2 (maks 3)
+- `/set3 tag1 tag2 tag3` — isi slot 3 (maks 3)
+- `/list` — lihat isi semua slot
+
+Tagar otomatis dibersihkan: `#` dihapus, huruf kecil, duplikat dihapus. Hanya chat dengan ID sesuai `TELEGRAM_CHAT_ID` yang dilayani.
+
+## Penjadwalan di Hobby
+
+⚠️ **Vercel Cron Hobby hanya bisa 1x sehari** (ekspresi lebih sering gagal saat deploy). Kalau butuh tiap 2 jam, pakai scheduler eksternal (cron-job.org, GitHub Actions, atau VPS) yang memanggil:
+
 ```
-Komputer harus menyala 24 jam.
-
-### B. VPS murah (Ubuntu) — paling stabil
-Opsi: Oracle Cloud Free Tier, atau VPS ±Rp30–60rb/bulan.
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs git
-git clone https://github.com/laluridhoo/radarbot.git radar-bot && cd radar-bot
-npm install && cp .env.example .env && nano .env
-npm run build
-sudo npm i -g pm2
-pm2 start dist/index.js --name radar-bot && pm2 save && pm2 startup
+GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=1
+GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=2
+GET https://<project>.vercel.app/api/cron?secret=<CRON_SECRET>&slot=3
 ```
 
-### C. Railway
-1. Push project ke GitHub (`.env` jangan ikut; sudah ada di `.gitignore`).
-2. Railway → New Project → Deploy from GitHub repo.
-3. Tab *Variables*: isi semua variabel dari `.env.example`.
-4. Build command `npm run build`, start command `npm start`.
-5. Tambahkan **Volume** yang di-mount ke `/app/data` supaya `sent.json` tidak hilang saat redeploy
-   (tanpa volume, setelah redeploy alert lama bisa terkirim ulang sekali).
-Railway berbasis kredit pemakaian; bot ringan ini biasanya murah, cek halaman pricing terbaru.
+## Hemat kredit Apify
 
-### D. Docker
-```bash
-docker build -t radar-bot .
-docker run -d --name radar-bot --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data radar-bot
-```
+Payload actor hanya berisi `hashtags`, `resultsPerPage: 5`, dan add-on nonaktif (`shouldDownloadVideos`, `shouldDownloadCovers`, `shouldDownloadSubtitles: false`, `commentsPerPost: 0`). Tidak ada date filter dan sorting. Run dipicu async;webhook yang memproses hasil setelah run sukses.
 
-### E. Vercel — Daemon + Upstash Redis (public beta)
-Repo ini sudah menyertakan `vercel.json` dan `Dockerfile.worker` untuk **Vercel Daemons**. Daemon menjalankan proses bot terus-menerus, tetapi storagenya **ephemeral**, jadi `UPSTASH_REDIS_REST_URL` dan `UPSTASH_REDIS_REST_TOKEN` **wajib** diisi di *Project Settings → Environment Variables* (scope Production). Tanpa keduanya, bot fallback ke `data/sent.json` yang akan hilang saat redeploy.
+## Catatan
 
-1. Import repo ini di Vercel dengan **root directory = repository root**.
-2. Isi semua variabel dari `.env.example`, termasuk kredensial Upstash Redis.
-3. Deploy ke Production — selama beta, daemon **hanya berjalan di production** (tidak di preview).
-4. Pantau lewat **Logs** dengan filter `source:daemon`.
-
-⚠️ **Quota Hobby**: 5 Active CPU-hours + 420 GB-hours provisioned memory per bulan. Satu instance 1 GiB yang hidup 24 jam menghabiskan ~420 GB-hours dalam **±17 hari** (2 GiB ≈ ±9 hari). Untuk berjalan terus sebulan penuh, gunakan **Pro** atau tetap pakai VPS/Railway.
-
-### ⚠️ Catatan Vercel Function biasa
-Jangan deploy `src/index.ts` sebagai Function/Cron biasa: Function hanya hidup saat dipanggil, cron Hobby hanya 1x sehari, dan filesystem tidak persisten. Gunakan Daemon seperti di atas.
-
-## 6. Mengontrol Biaya Apify
-- Biaya utama = jumlah video yang di-scrape. Hitung kasar:
-  `jumlah_tagar × RESULTS_PER_HASHTAG × siklus_per_hari × harga_per_hasil`.
-- Mulai dengan interval 60 menit (`CRON_SCHEDULE=0 * * * *`) dan `RESULTS_PER_HASHTAG=20`.
-- Matikan tagar yang tidak pernah menghasilkan alert.
-- Pasang *monthly usage limit* di Apify agar tidak kebablasan.
-
-## 7. Troubleshooting
-| Gejala | Penyebab / Solusi |
-|---|---|
-| `HTTP 401/403` dari Apify | Token salah |
-| `HTTP 402` | Kredit Apify habis |
-| `HTTP 400` dari Apify | Nama field input actor berubah → cek tab Input actor, sesuaikan di `src/scrapers/*.ts` |
-| Tidak ada alert sama sekali | Turunkan `MIN_VIEWS` dulu untuk tes, cek log "video dipindai" |
-| Telegram `400 chat not found` | Kamu belum menekan Start di bot / chat id salah |
-
-## 8. Catatan Penting
-- Hasil tagar TikTok **tidak selalu urut terbaru**. Kalau banyak video lama lolos scraping tapi tidak ada yang
-  ≤ 6 jam, naikkan `RESULTS_PER_HASHTAG` atau cek opsi sort di input actor.
-- Skema output actor pihak ketiga bisa berubah; kalau field kosong, cek dataset hasil run di Apify Console.
-- Instagram jauh lebih tidak stabil untuk scraping hashtag (view Reels sering tidak tersedia). Mulai dari TikTok.
-- Scraping tunduk pada ToS platform; gunakan secukupnya.
+- Webhook Apify bisa dikirim lebih dari sekali → `markSeen()` di Redis mencegah alert dobel (TTL 48 jam).
+- `VERCEL_PROJECT_URL` harus URL produksi tanpa trailing slash.
+- Simpan `CRON_SECRET` minimal 24 karakter acak; jangan pernah taruh di repo.

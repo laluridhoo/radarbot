@@ -1,20 +1,78 @@
-import { config } from './config.js';
-import type { GacorVideo, VideoItem } from './types.js';
+export interface ApifyVideo {
+  id?: string;
+  createTime?: number | string;
+  createTimeISO?: string;
+  playCount?: number | string;
+  webVideoUrl?: string;
+  url?: string;
+  videoUrl?: string;
+  hashtag?: string;
+  hashtags?: string[];
+  authorMeta?: { name?: string };
+}
 
-const HOUR = 3_600_000;
+export interface ViralVideo {
+  id: string;
+  hashtag: string;
+  author: string;
+  ageMinutes: number;
+  ageHours: number;
+  views: number;
+  vph: number;
+  url: string;
+}
 
-/** Return GacorVideo kalau lolos kriteria, selain itu null. */
-export function evaluate(v: VideoItem, now = Date.now()): GacorVideo | null {
-  const ageMs = now - v.uploadedAt.getTime();
-  if (ageMs < -5 * 60_000) return null; // timestamp aneh (di masa depan)
+const MAX_AGE_SECONDS = 6 * 3600;
+const MIN_VPH = 3000;
 
-  const ageHours = Math.max(ageMs, 0) / HOUR;
-  if (ageHours > config.maxAgeHours) return null;
-  if (v.views < config.minViews) return null;
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number(value.replace(/[^\d.-]/g, ''));
+  return NaN;
+}
 
-  // Batas bawah 15 menit supaya video baru upload tidak menghasilkan velocity absurd
-  const viewsPerHour = v.views / Math.max(ageHours, 0.25);
-  if (viewsPerHour < config.minViewsPerHour) return null;
+function createdAtSeconds(v: ApifyVideo): number {
+  const fromEpoch = toNumber(v.createTime);
+  if (Number.isFinite(fromEpoch) && fromEpoch > 0) {
+    return fromEpoch > 1e12 ? Math.floor(fromEpoch / 1000) : fromEpoch;
+  }
+  if (v.createTimeISO) {
+    const parsed = Date.parse(v.createTimeISO);
+    if (!Number.isNaN(parsed)) return Math.floor(parsed / 1000);
+  }
+  return 0;
+}
 
-  return { ...v, ageHours, viewsPerHour };
+/** Filter early-viral: umur < 6 jam dan VPH >= 3000. */
+export function findEarlyViral(items: ApifyVideo[], nowSeconds = Math.floor(Date.now() / 1000)): ViralVideo[] {
+  const result: ViralVideo[] = [];
+
+  for (const item of items) {
+    const createdAt = createdAtSeconds(item);
+    const views = toNumber(item.playCount);
+    if (!createdAt || !Number.isFinite(views)) continue;
+
+    const ageSeconds = nowSeconds - createdAt;
+    if (ageSeconds < 0 || ageSeconds > MAX_AGE_SECONDS) continue;
+
+    const ageHours = ageSeconds / 3600;
+    const vph = views / Math.max(ageHours, 0.5);
+    if (vph < MIN_VPH) continue;
+
+    const url = item.webVideoUrl ?? item.url ?? item.videoUrl;
+    if (!url) continue;
+
+    result.push({
+      id: item.id ?? url,
+      hashtag: item.hashtag ?? item.hashtags?.[0] ?? '-',
+      author: item.authorMeta?.name ?? 'unknown',
+      ageMinutes: Math.floor(ageSeconds / 60),
+      ageHours,
+      views,
+      vph,
+      url,
+    });
+  }
+
+  return result.sort((a, b) => b.vph - a.vph);
 }
