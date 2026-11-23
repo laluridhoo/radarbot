@@ -18,7 +18,9 @@ radar-bot/
 │   ├── http.ts / retry.ts    # fetch + exponential backoff
 │   └── scrapers/             # apify.ts, tiktok.ts, instagram.ts
 ├── .env.example
-├── Dockerfile
+├── Dockerfile              # build lokal / Docker biasa
+├── Dockerfile.worker       # build untuk Vercel Daemon
+├── vercel.json             # deklarasi daemon
 └── package.json
 ```
 
@@ -85,7 +87,7 @@ Opsi: Oracle Cloud Free Tier, atau VPS ±Rp30–60rb/bulan.
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs git
-git clone <repo-kamu> radar-bot && cd radar-bot
+git clone https://github.com/laluridhoo/radarbot.git radar-bot && cd radar-bot
 npm install && cp .env.example .env && nano .env
 npm run build
 sudo npm i -g pm2
@@ -107,9 +109,18 @@ docker build -t radar-bot .
 docker run -d --name radar-bot --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data radar-bot
 ```
 
-### ⚠️ Vercel — tidak cocok
-Vercel itu serverless: tidak ada proses yang hidup terus dan filesystem-nya tidak persisten.
-Gunakan VPS/Railway/lokal.
+### E. Vercel — Daemon + Upstash Redis (public beta)
+Repo ini sudah menyertakan `vercel.json` dan `Dockerfile.worker` untuk **Vercel Daemons**. Daemon menjalankan proses bot terus-menerus, tetapi storagenya **ephemeral**, jadi `UPSTASH_REDIS_REST_URL` dan `UPSTASH_REDIS_REST_TOKEN` **wajib** diisi di *Project Settings → Environment Variables* (scope Production). Tanpa keduanya, bot fallback ke `data/sent.json` yang akan hilang saat redeploy.
+
+1. Import repo ini di Vercel dengan **root directory = repository root**.
+2. Isi semua variabel dari `.env.example`, termasuk kredensial Upstash Redis.
+3. Deploy ke Production — selama beta, daemon **hanya berjalan di production** (tidak di preview).
+4. Pantau lewat **Logs** dengan filter `source:daemon`.
+
+⚠️ **Quota Hobby**: 5 Active CPU-hours + 420 GB-hours provisioned memory per bulan. Satu instance 1 GiB yang hidup 24 jam menghabiskan ~420 GB-hours dalam **±17 hari** (2 GiB ≈ ±9 hari). Untuk berjalan terus sebulan penuh, gunakan **Pro** atau tetap pakai VPS/Railway.
+
+### ⚠️ Catatan Vercel Function biasa
+Jangan deploy `src/index.ts` sebagai Function/Cron biasa: Function hanya hidup saat dipanggil, cron Hobby hanya 1x sehari, dan filesystem tidak persisten. Gunakan Daemon seperti di atas.
 
 ## 6. Mengontrol Biaya Apify
 - Biaya utama = jumlah video yang di-scrape. Hitung kasar:

@@ -4,7 +4,7 @@ import { logger } from './logger.js';
 import { withRetry, sleep } from './retry.js';
 import { scrapeInstagram } from './scrapers/instagram.js';
 import { scrapeTikTok } from './scrapers/tiktok.js';
-import { SentStore } from './store.js';
+import { createSentStore } from './store.js';
 import { sendAlert, sendText } from './telegram.js';
 import type { GacorVideo, Platform, VideoItem } from './types.js';
 
@@ -34,7 +34,11 @@ export async function runCycle(): Promise<void> {
   const t0 = Date.now();
 
   try {
-    const store = new SentStore(config.sentFile);
+    const store = createSentStore({
+      file: config.sentFile,
+      redisUrl: config.redisUrl,
+      redisToken: config.redisToken,
+    });
     const platforms: Platform[] = [];
     if (config.enableTiktok) platforms.push('tiktok');
     if (config.enableInstagram) platforms.push('instagram');
@@ -55,7 +59,7 @@ export async function runCycle(): Promise<void> {
         scanned += items.length;
         for (const item of items) {
           const g = evaluate(item);
-          if (g && !store.has(g.id) && !hits.has(g.id)) hits.set(g.id, g);
+          if (g && !(await store.has(g.id)) && !hits.has(g.id)) hits.set(g.id, g);
         }
       } catch (e) {
         failed++;
@@ -71,14 +75,14 @@ export async function runCycle(): Promise<void> {
     for (const v of winners) {
       try {
         await sendAlert(v);
-        store.add(v.id);
+        await store.add(v.id);
         sent++;
         await sleep(1100); // hindari rate limit Telegram (~1 msg/detik per chat)
       } catch (e) {
         logger.error(`Gagal kirim alert ${v.id}:`, (e as Error).message);
       }
     }
-    store.save();
+    await store.save();
 
     logger.info(
       `Selesai ${((Date.now() - t0) / 1000).toFixed(0)}s | video dipindai: ${scanned} | lolos filter: ${hits.size} | terkirim: ${sent} | job gagal: ${failed}/${jobs.length}`,

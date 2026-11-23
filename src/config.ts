@@ -56,4 +56,7 @@ export const config = {
   maxAlertsPerCycle: num('MAX_ALERTS_PER_CYCLE', 20),
   hashtags: loadHashtags(),
   sentFile: fileURLToPath(new URL('../data/sent.json', import.meta.url)),
+  // Diisi di Vercel. Kosong -> fallback ke data/sent.json untuk lokal.
+  redisUrl: str('UPSTASH_REDIS_REST_URL', ''),
+  redisToken: str('UPSTASH_REDIS_REST_TOKEN', ''),
 };
